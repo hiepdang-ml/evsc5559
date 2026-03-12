@@ -76,7 +76,7 @@ class Era5TemperatureReader:
 
     @staticmethod
     def _select_north_america(data: xr.Dataset) -> xr.Dataset:
-        return data.sel(latitude=slice(75, 15), longtitude=slice(190, 310))
+        return data.sel(latitude=slice(75, 15), longitude=slice(190, 310))
 
 class DailyMean:
 
