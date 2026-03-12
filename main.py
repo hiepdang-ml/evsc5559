@@ -282,7 +282,7 @@ class HeatwaveAnalysis:
 if __name__ == "__main__":
 
     root: str = "/scratch/zgp2ps/era5/raw/singlelevel/"
-    from_year: int = 2020
+    from_year: int = 2023
     to_year: int = 2025
     skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=from_year, to_year=to_year)
     t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=from_year, to_year=to_year)
