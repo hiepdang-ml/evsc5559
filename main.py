@@ -1,13 +1,13 @@
-from typing import cast, Literal
+from typing import cast, Literal, Any
 from functools import cached_property
 from pathlib import Path
 import re
 
-import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 import pandas as pd
+import geopandas as gpd
 
 
 DATA_ROOT = "/scratch/zgp2ps/era5/raw/singlelevel/"
@@ -253,29 +253,40 @@ class HeatwaveAnalysis:
             "spatial_extreme_frequency": spatial_extreme_frequency,
         }
 
-    def plot_spatial_extreme_frequency_map(self) -> None:
+    def plot_spatial_extreme_frequency(self) -> None:
         spatial_extreme_frequency: xr.DataArray = self.extreme_mask.mean(dim="valid_time")
-
-        longitude: np.ndarray = spatial_extreme_frequency["longitude"].to_numpy()
-        latitude: np.ndarray = spatial_extreme_frequency["latitude"].to_numpy()
         values: np.ndarray = spatial_extreme_frequency.to_numpy()
 
-        fig = plt.figure(figsize=(14, 6))
-        ax = fig.add_subplot(111, projection=ccrs.Robinson())
-        ax.coastlines(linewidth=0.7)    # pyright: ignore
+        lon_min: float = float(spatial_extreme_frequency["longitude"].min().item())
+        lon_max: float = float(spatial_extreme_frequency["longitude"].max().item())
+        lat_min: float = float(spatial_extreme_frequency["latitude"].min().item())
+        lat_max: float = float(spatial_extreme_frequency["latitude"].max().item())
 
-        mesh = ax.pcolormesh(
-            longitude,
-            latitude,
+        fig, ax = plt.subplots(figsize=(14, 6))
+        image = ax.imshow(
             values,
-            transform=ccrs.PlateCarree(),
-            shading="auto",
             cmap="hot",
+            origin="upper",
+            aspect="auto",
+            extent=[lon_min, lon_max, lat_min, lat_max],
         )
-        ax.set_title(f"{self.var_name.upper()} Spatial Extreme Frequency")
-        fig.colorbar(mesh, ax=ax, orientation="horizontal", pad=0.05, label="Extreme Frequency")
+
+        world: gpd.GeoDataFrame = gpd.read_file(
+            gpd.datasets.get_path("naturalearth_lowres")
+        )
+        world.boundary.plot(ax=ax, color="black", linewidth=0.4)
+
+        ax.set_title(f"{self.var_name.upper()} Spatial Extreme Frequency", fontsize=18)
+        ax.set_xlabel("Longitude", fontsize=14)
+        ax.set_ylabel("Latitude", fontsize=14)
+        ax.tick_params(axis="both", labelsize=12)
+
+        cbar = fig.colorbar(image, ax=ax)
+        cbar.set_label("Extreme Frequency", fontsize=14)
+        cbar.ax.tick_params(labelsize=12)
+
         fig.tight_layout()
-        fig.savefig(f"{self.var_name}_spatial_extreme_frequency_map.png", dpi=200)
+        fig.savefig(f"{self.var_name}_spatial_extreme_frequency.png", dpi=200)
 
 
 
@@ -289,4 +300,4 @@ if __name__ == "__main__":
     daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
     daily_mean.plot()
     heatwave = HeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
-    heatwave.plot_spatial_extreme_frequency_map()
+    heatwave.plot_spatial_extreme_frequency()
