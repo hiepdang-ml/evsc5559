@@ -55,6 +55,7 @@ class Era5TemperatureReader:
         mean_series.index = pd.to_datetime(mean_series.index)
         return mean_series.sort_index()
 
+
 class Analysis:
 
     def __init__(self, root_dir: str | Path) -> None:
@@ -80,3 +81,8 @@ class Analysis:
         axes[1].set_xlabel("Date")
         fig.tight_layout()
         fig.savefig(fname="line_plot.png")
+
+
+if __name__ == "__main__":
+    analysis = Analysis("/scratch/zgp2ps/era5/raw/singlelevel/")
+    analysis.plot_daily_timeseries()
