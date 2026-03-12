@@ -16,11 +16,7 @@ class Era5TemperatureReader:
     def __init__(self, root_dir: str | Path, var_name: Literal["skt", "t2m"]) -> None:
         self.root_dir = Path(root_dir)
         self.var_name = var_name
-        self.file_re: re.Pattern
-        if var_name == "skt":
-            self.file_re = re.compile(r"^skin_temperature.*\.nc$")
-        else:
-            self.file_re = re.compile(r"^2m_temperature.*\.nc$")
+        self.file_re: str = "*skin_temperature*" if var_name == "skt" else "*2m_temperature*"
 
     @cached_property
     def filepaths(self) -> list[Path]:
@@ -30,10 +26,10 @@ class Era5TemperatureReader:
         )
         filepaths: list[Path] = []
         for quarter_dir in quarter_dirs:
-            matches: list[Path] = sorted(quarter_dir.glob(self.file_re.pattern))
+            matches: list[Path] = list(quarter_dir.glob(self.file_re))
             assert len(matches) == 1, (
-                f"No file found with pattern: {self.file_re.pattern}. "
-                f"List of available file: {sorted(quarter_dir.glob('*'))}"
+                f"No file found with pattern: {self.file_re}. "
+                f"List of available files: {sorted([f.name for f in quarter_dir.glob('*')])}"
             )
             filepaths.append(matches[0])
 
