@@ -1,4 +1,4 @@
-from typing import cast, Literal
+from typing import cast, Literal, Any
 from functools import cached_property
 from pathlib import Path
 import re
@@ -8,12 +8,15 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import geopandas as gpd
-
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+import cmasher as cmr
 
 DATA_ROOT = "/scratch/zgp2ps/era5/raw/singlelevel/"
+LAND_MASK_PATH = "/scratch/zgp2ps/era5/raw/landmask/landmask.nc"
+
 
 class Era5TemperatureReader:
-    """Load quarterly ERA5 temperature files and concatenate over time."""
 
     QUARTER_RE: re.Pattern = re.compile(r"^\d{4}q[1-4]$")
 
@@ -47,23 +50,26 @@ class Era5TemperatureReader:
 
     @cached_property
     def dataset(self) -> xr.Dataset:
-        ds: xr.Dataset = xr.open_mfdataset(
-            self.filepaths,
-            engine="h5netcdf",
-            combine="nested",
-            concat_dim="valid_time",
-            parallel=True,
-            chunks="auto",
-        ).sortby("valid_time")
-        ds = ds[[self.var_name]]
-        ds = self._select_north_america(ds)
-        ds = self._drop_feb29(ds)
-        ds = ds.chunk({"valid_time": -1, "latitude": 100, "longitude": 100})
-        return ds
+        datasets: list[xr.Dataset] = []
+        for path in self.filepaths:
+            ds: xr.Dataset = xr.open_dataset(path, engine="h5netcdf")
+            ds = ds[[self.var_name]]
+            ds = self._drop_feb29(ds)
+            ds = self._select_conus(ds)
+            datasets.append(ds)
+        combined: xr.Dataset = xr.concat(datasets, dim="valid_time").sortby("valid_time")
+        return combined
 
     @cached_property
     def dataarray(self) -> xr.DataArray:
         return self.dataset[self.var_name]
+
+    @cached_property
+    def land_mask(self) -> xr.DataArray:
+        ds: xr.Dataset = xr.open_dataset(LAND_MASK_PATH, engine="h5netcdf")
+        mask: xr.DataArray = ds["lsm"].squeeze(drop=True)
+        mask = self._select_conus(mask)
+        return mask >= 0.5
 
     @cached_property
     def daily_mean(self) -> pd.Series:
@@ -81,8 +87,11 @@ class Era5TemperatureReader:
         return data.isel(valid_time=keep)
 
     @staticmethod
-    def _select_north_america(data: xr.Dataset) -> xr.Dataset:
-        return data.sel(latitude=slice(75, 15), longitude=slice(190, 310))
+    def _select_conus(data: xr.Dataset) -> xr.Dataset:
+        return data.sel(
+            latitude=slice(49.5, 24.0),
+            longitude=slice(235.0, 293.5),
+        )
 
 class DailyMean:
 
@@ -136,179 +145,243 @@ class HeatwaveAnalysis:
             root_dir=DATA_ROOT, var_name=var_name, from_year=from_year, to_year=to_year
         )
 
-    @staticmethod
-    def _month_day_index(time: pd.DatetimeIndex) -> pd.Index:
-        return pd.Index(time.strftime("%m-%d"), name="month_day")
-
-    @staticmethod
-    def _month_day_key(data: xr.DataArray) -> xr.DataArray:
-        month: xr.DataArray = data["valid_time"].dt.month.astype(str).str.zfill(2)
-        day: xr.DataArray = data["valid_time"].dt.day.astype(str).str.zfill(2)
-        return month + "-" + day
-
     @cached_property
     def threshold(self) -> xr.DataArray:
-        month_day: xr.DataArray = self._month_day_key(self.reader.dataarray)
-        return self.reader.dataarray.groupby(month_day).quantile(self.percentile, dim="valid_time")
+        threshold: xr.DataArray = self.reader.dataarray.quantile(
+            self.percentile,
+            dim="valid_time",
+            skipna=True,
+        )
+        return threshold.squeeze(drop=True)
 
     @cached_property
     def extreme_mask(self) -> xr.DataArray:
-        month_day: xr.DataArray = self._month_day_key(self.reader.dataarray)
-        return self.reader.dataarray.groupby(month_day) > self.threshold
+        extreme_mask: xr.DataArray = self.reader.dataarray > self.threshold
+        return extreme_mask.squeeze(drop=True)
 
     @cached_property
-    def event_table(self) -> pd.DataFrame:
-        daily_extreme_fraction: pd.Series = cast(
-            pd.Series,
-            self.extreme_mask.mean(dim=("latitude", "longitude")).to_pandas(),
+    def yearly_count_map(self) -> xr.DataArray:
+        land_mask: xr.DataArray = self.reader.land_mask
+        yearly_count_map: xr.DataArray = (
+            self.extreme_mask
+            .where(land_mask)
+            .groupby("valid_time.year")
+            .sum(dim="valid_time", skipna=True)
+            .where(land_mask)
+            .squeeze(drop=True)
         )
-        daily_extreme_fraction.index = pd.to_datetime(daily_extreme_fraction.index)
-        daily_extreme_fraction = daily_extreme_fraction.sort_index()
-        regional_mask: pd.Series = daily_extreme_fraction >= self.min_area_fraction
+        return yearly_count_map
 
-        regional_mean: pd.Series = cast(
-            pd.Series,
-            self.reader.dataarray.mean(dim=("latitude", "longitude")).to_pandas(),
+    @cached_property
+    def daily_extreme_fraction(self) -> xr.DataArray:
+        land_mask: xr.DataArray = self.reader.land_mask
+        extreme_on_land: xr.DataArray = self.extreme_mask.where(land_mask)
+        land_count: xr.DataArray = land_mask.sum(dim=("latitude", "longitude"))
+        extreme_count: xr.DataArray = extreme_on_land.sum(dim=("latitude", "longitude"))
+        return extreme_count / land_count
+
+    @cached_property
+    def frequency_by_year(self) -> pd.Series:
+        regional_mask: xr.DataArray = self.daily_extreme_fraction >= self.min_area_fraction
+        mask: np.ndarray = regional_mask.to_numpy()
+        time: pd.DatetimeIndex = pd.to_datetime(regional_mask["valid_time"].to_numpy())
+        event_starts: list[pd.Timestamp] = []
+        run_length: int = 0
+        start_index: int | None = None
+        for index, is_event_day in enumerate(mask):
+            if bool(is_event_day):
+                if run_length == 0:
+                    start_index = index
+                run_length += 1
+            else:
+                if start_index is not None and run_length >= self.min_days:
+                    event_starts.append(cast(pd.Timestamp, time[start_index]))
+                start_index = None
+                run_length = 0
+
+        if start_index is not None and run_length >= self.min_days:
+            event_starts.append(cast(pd.Timestamp, time[start_index]))
+
+        if not event_starts:
+            return pd.Series(dtype=int)
+
+        years: pd.Index = pd.Index([timestamp.year for timestamp in event_starts], name="year")
+        frequency: pd.Series = years.value_counts().sort_index()
+        return frequency
+
+    def plot_frequency_by_year(self) -> None:
+        fig, ax = plt.subplots(figsize=(12, 5))
+        ax.bar(self.frequency_by_year.index.to_numpy(), self.frequency_by_year.to_numpy(), color="steelblue", width=0.8)
+        ax.set_title(f"{self.var_name.upper()} Heatwave Frequency by Year", fontsize=18)
+        ax.set_xlabel("Year", fontsize=14)
+        ax.set_ylabel("Number of Heatwaves", fontsize=14)
+        ax.tick_params(axis="both", labelsize=12)
+        ax.grid(True, axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(f"{self.var_name}_heatwave_frequency_by_year.png", dpi=200)
+
+    def plot_count_map(self, year: int) -> None:
+        count_map: xr.DataArray = self.yearly_count_map.sel(year=year)
+
+        if float(count_map.longitude.max()) > 180:
+            count_map = count_map.assign_coords(
+                longitude=((count_map.longitude + 180) % 360) - 180
+            ).sortby("longitude")
+
+        lon: np.ndarray = count_map["longitude"].to_numpy()
+        lat: np.ndarray = count_map["latitude"].to_numpy()
+        values: np.ndarray = count_map.to_numpy()
+
+        fig = plt.figure(figsize=(10, 6))
+        ax: Any = fig.add_subplot(
+            111,
+            projection=ccrs.AlbersEqualArea(
+                central_longitude=-96,
+                central_latitude=37.5,
+            ),
         )
-        regional_mean.index = pd.to_datetime(regional_mean.index)
-        regional_mean = regional_mean.sort_index()
-
-        threshold_mean: pd.Series = cast(
-            pd.Series,
-            self.threshold.mean(dim=("latitude", "longitude")).to_pandas(),
-        )
-        threshold_mean.index = pd.Index(threshold_mean.index.astype(str), name="month_day")
-        month_day_index: pd.Index = self._month_day_index(pd.DatetimeIndex(regional_mean.index))
-        daily_threshold: pd.Series = pd.Series(
-            threshold_mean.loc[month_day_index].to_numpy(),
-            index=regional_mean.index,
-            name="threshold",
-        )
-        excess: pd.Series = regional_mean - daily_threshold
-
-        events: list[dict[str, object]] = []
-        start: pd.Timestamp | None = None
-        active_dates: list[pd.Timestamp] = []
-
-        for timestamp, is_event_day in regional_mask.items():
-            if is_event_day:
-                if start is None:
-                    start = timestamp
-                    active_dates = []
-                active_dates.append(timestamp)
-                continue
-
-            values: pd.Series
-            anomalies: pd.Series
-            if start is not None and len(active_dates) >= self.min_days:
-                values = regional_mean.loc[active_dates]
-                anomalies = excess.loc[active_dates]
-                events.append(
-                    {
-                        "start": start,
-                        "end": active_dates[-1],
-                        "duration": len(active_dates),
-                        "mean_temp": float(values.mean()),
-                        "peak_temp": float(values.max()),
-                        "mean_excess": float(anomalies.mean()),
-                        "peak_excess": float(anomalies.max()),
-                    }
-                )
-
-            start = None
-            active_dates = []
-
-        if start is not None and len(active_dates) >= self.min_days:
-            values = regional_mean.loc[active_dates]
-            anomalies = excess.loc[active_dates]
-            events.append(
-                {
-                    "start": start,
-                    "end": active_dates[-1],
-                    "duration": len(active_dates),
-                    "mean_temp": float(values.mean()),
-                    "peak_temp": float(values.max()),
-                    "mean_excess": float(anomalies.mean()),
-                    "peak_excess": float(anomalies.max()),
-                }
-            )
-
-        return pd.DataFrame(events)
-
-    def summary(self) -> dict[str, pd.Series | pd.DataFrame | xr.DataArray]:
-        daily_extreme_fraction: pd.Series = cast(
-            pd.Series,
-            self.extreme_mask.mean(dim=("latitude", "longitude")).to_pandas(),
-        )
-        daily_extreme_fraction.index = pd.to_datetime(daily_extreme_fraction.index)
-        daily_extreme_fraction = daily_extreme_fraction.sort_index()
-
-        frequency_by_year: pd.Series
-        first_event_by_year: pd.Series
-        if self.event_table.empty:
-            frequency_by_year = pd.Series(dtype=int)
-            first_event_by_year = pd.Series(dtype="datetime64[ns]")
-        else:
-            event_years: pd.Series = pd.to_datetime(self.event_table["start"]).dt.year
-            frequency_by_year = event_years.value_counts().sort_index()
-            first_event_by_year = cast(
-                pd.Series, self.event_table.assign(year=event_years).groupby("year")["start"].min()
-            )
-
-        spatial_extreme_frequency: xr.DataArray = self.extreme_mask.mean(dim="valid_time")
-        return {
-            "daily_extreme_fraction": daily_extreme_fraction,
-            "event_table": self.event_table,
-            "frequency_by_year": frequency_by_year,
-            "first_event_by_year": first_event_by_year,
-            "spatial_extreme_frequency": spatial_extreme_frequency,
-        }
-
-    def plot_spatial_extreme_frequency(self) -> None:
-        spatial_extreme_frequency: xr.DataArray = self.extreme_mask.mean(dim="valid_time")
-        values: np.ndarray = spatial_extreme_frequency.to_numpy()
-
-        lon_min: float = float(spatial_extreme_frequency["longitude"].min().item())
-        lon_max: float = float(spatial_extreme_frequency["longitude"].max().item())
-        lat_min: float = float(spatial_extreme_frequency["latitude"].min().item())
-        lat_max: float = float(spatial_extreme_frequency["latitude"].max().item())
-
-        fig, ax = plt.subplots(figsize=(14, 6))
-        image = ax.imshow(
+        mesh = ax.pcolormesh(
+            lon,
+            lat,
             values,
-            cmap="hot",
-            origin="upper",
-            aspect="auto",
-            extent=[lon_min, lon_max, lat_min, lat_max],
+            shading="auto",
+            cmap=cmr.sunburst_r,
+            vmin=0,
+            vmax=50,
+            transform=ccrs.PlateCarree(),
         )
-
-        world: gpd.GeoDataFrame = gpd.read_file(
-            gpd.datasets.get_path("naturalearth_lowres")
-        )
-        world.boundary.plot(ax=ax, color="black", linewidth=0.4)
-
-        ax.set_title(f"{self.var_name.upper()} Spatial Extreme Frequency", fontsize=18)
+        ax.set_extent([-125, -66.5, 24, 49.5], crs=ccrs.PlateCarree())
+        ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.5, edgecolor="black")
+        ax.add_feature(cfeature.BORDERS.with_scale("50m"), linewidth=0.4, edgecolor="black")
+        ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.3, edgecolor="black")
+        ax.set_title(f"Count of Extreme Days per Pixel ({year})", fontsize=18)
         ax.set_xlabel("Longitude", fontsize=14)
         ax.set_ylabel("Latitude", fontsize=14)
-        ax.tick_params(axis="both", labelsize=12)
 
-        cbar = fig.colorbar(image, ax=ax)
-        cbar.set_label("Extreme Frequency", fontsize=14)
-        cbar.ax.tick_params(labelsize=12)
+        cbar = fig.colorbar(mesh, ax=ax, shrink=0.75, pad=0.02, fraction=0.035, aspect=30)
+        cbar.set_label("Extreme Day Count", fontsize=14)
 
         fig.tight_layout()
-        fig.savefig(f"{self.var_name}_spatial_extreme_frequency.png", dpi=200)
+        fig.savefig(f"{self.var_name}_count_map_{year}.png", dpi=400)
 
+class SameTimeHeatwaveAnalysis(HeatwaveAnalysis):
+
+    @cached_property
+    def month_day_key(self) -> xr.DataArray:
+        month: xr.DataArray = self.reader.dataarray["valid_time"].dt.month
+        day: xr.DataArray = self.reader.dataarray["valid_time"].dt.day
+        return month * 100 + day
+
+    @cached_property
+    def threshold(self) -> xr.DataArray:
+        threshold: xr.DataArray = self.reader.dataarray.groupby(self.month_day_key).quantile(
+            self.percentile,
+            dim="valid_time",
+            skipna=True,
+        )
+        return threshold.squeeze(drop=True)
+
+    @cached_property
+    def extreme_mask(self) -> xr.DataArray:
+        extreme_mask: xr.DataArray = self.reader.dataarray.groupby(self.month_day_key) > self.threshold
+        return extreme_mask.squeeze(drop=True)
+
+    @staticmethod
+    def _week_index_from_dayofyear(dayofyear: pd.Series) -> pd.Series:
+        # Map 365 days into exactly 52 week bins.
+        return ((dayofyear - 1) * 52 // 365) + 1
+
+    @staticmethod
+    def _month_tick_positions() -> tuple[list[float], list[str]]:
+        month_starts = pd.date_range("2001-01-01", "2001-12-01", freq="MS")
+        start_weeks = [int(((timestamp.dayofyear - 1) * 52 // 365) + 1) for timestamp in month_starts]
+        next_start_weeks = start_weeks[1:] + [53]
+        tick_positions = [
+            (start_week - 1 + next_week - 2) / 2 for start_week, next_week in zip(start_weeks, next_start_weeks)
+        ]
+        tick_labels = [timestamp.strftime("%b") for timestamp in month_starts]
+        return tick_positions, tick_labels
+
+    @cached_property
+    def weekly_extreme_day_counts(self) -> pd.DataFrame:
+        regional_mask: xr.DataArray = self.daily_extreme_fraction >= self.min_area_fraction
+        event_series: pd.Series = cast(pd.Series, regional_mask.to_pandas()).astype(int)
+        event_series.index = pd.to_datetime(event_series.index)
+        heatmap_frame = pd.DataFrame(
+            {
+                "year": event_series.index.year,
+                "week": self._week_index_from_dayofyear(pd.Series(event_series.index.dayofyear, index=event_series.index)),
+                "extreme_day": event_series.to_numpy(),
+            },
+            index=event_series.index,
+        )
+        weekly_counts = (
+            heatmap_frame
+            .groupby(["year", "week"])["extreme_day"]
+            .sum()
+            .unstack(fill_value=0)
+            .reindex(index=range(self.from_year, self.to_year + 1), fill_value=0)
+            .reindex(columns=range(1, 53), fill_value=0)
+        )
+        return weekly_counts
+
+    def plot_heatwave_distribution(self) -> None:
+        weekly_counts: pd.DataFrame = self.weekly_extreme_day_counts
+        values: np.ndarray = weekly_counts.to_numpy()
+
+        fig_width = max(12, weekly_counts.shape[1] * 0.25)
+        fig_height = max(6, weekly_counts.shape[0] * 0.25)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+        image = ax.imshow(
+            values,
+            aspect="equal",
+            cmap=cmr.sunburst_r,
+            vmin=0,
+            vmax=7,
+            interpolation="nearest",
+        )
+
+        ax.set_title(f"{self.var_name.upper()} Heatwave Distribution by Week", fontsize=18)
+        ax.set_xlabel("Week of Year", fontsize=14)
+        ax.set_ylabel("Year", fontsize=14)
+        ax.set_xticks(np.arange(0, 52, 4))
+        ax.set_xticklabels(np.arange(1, 53, 4))
+        ax.set_yticks(np.arange(len(weekly_counts.index)))
+        ax.set_yticklabels(weekly_counts.index.astype(str))
+        ax.set_xticks(np.arange(-0.5, weekly_counts.shape[1], 1), minor=True)
+        ax.set_yticks(np.arange(-0.5, weekly_counts.shape[0], 1), minor=True)
+        ax.grid(which="minor", color="white", linewidth=0.6)
+        ax.tick_params(which="minor", bottom=False, left=False)
+
+        top_ax = ax.twiny()
+        top_ax.set_xlim(ax.get_xlim())
+        month_positions, month_labels = self._month_tick_positions()
+        top_ax.set_xticks(month_positions)
+        top_ax.set_xticklabels(month_labels)
+        top_ax.set_xlabel("Month", fontsize=14)
+
+        cbar = fig.colorbar(image, ax=ax, pad=0.02, fraction=0.035, aspect=30)
+        cbar.set_label("Extreme Days per Week", fontsize=14)
+
+        fig.tight_layout()
+        fig.savefig(f"{self.var_name}_heatwave_distribution_by_week.png", dpi=400)
 
 
 if __name__ == "__main__":
 
     root: str = "/scratch/zgp2ps/era5/raw/singlelevel/"
-    from_year: int = 2023
+    from_year: int = 2000
     to_year: int = 2025
     skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=from_year, to_year=to_year)
     t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=from_year, to_year=to_year)
     # daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
     # daily_mean.plot()
-    heatwave = HeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
-    # heatwave.plot_spatial_extreme_frequency()
+    heatwave = SameTimeHeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
+    heatwave.reader.dataset
+    heatwave.threshold
+    # heatwave.frequency_by_year
+    # heatwave.plot_frequency_by_year()
+    # for year in range(from_year, to_year + 1):
+    #     heatwave.plot_count_map(year)
+    #
+    heatwave.plot_heatwave_distribution()
