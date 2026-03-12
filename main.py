@@ -47,7 +47,11 @@ class Era5TemperatureReader:
 
     @cached_property
     def dataset(self) -> xr.Dataset:
-        datasets: list[xr.Dataset] = [self._drop_feb29(xr.open_dataset(path)) for path in self.filepaths]
+        datasets: list[xr.Dataset] = [
+            self._select_north_america(
+                self._drop_feb29(xr.open_dataset(path))
+            ) for path in self.filepaths
+        ]
         combined: xr.Dataset = xr.concat(datasets, dim="valid_time").sortby("valid_time")
         return combined
 
@@ -70,6 +74,9 @@ class Era5TemperatureReader:
         keep: xr.DataArray = ~((time.dt.month == 2) & (time.dt.day == 29))
         return data.isel(valid_time=keep)
 
+    @staticmethod
+    def _select_north_america(data: xr.Dataset) -> xr.Dataset:
+        return data.sel(latitude=slice(75, 15), longtitude=slice(190, 310))
 
 class DailyMean:
 
