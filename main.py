@@ -1,4 +1,4 @@
-from typing import cast, Literal, Any
+from typing import cast, Literal
 from functools import cached_property
 from pathlib import Path
 import re
@@ -47,13 +47,17 @@ class Era5TemperatureReader:
 
     @cached_property
     def dataset(self) -> xr.Dataset:
-        datasets: list[xr.Dataset] = [
-            self._select_north_america(
-                self._drop_feb29(xr.open_dataset(path))
-            ) for path in self.filepaths
-        ]
-        combined: xr.Dataset = xr.concat(datasets, dim="valid_time").sortby("valid_time")
-        return combined
+        ds: xr.Dataset = xr.open_mfdataset(
+            self.filepaths,
+            combine="nested",
+            concat_dim="valid_time",
+            chunks={"valid_time": 90, "latitude": 100, "longitude": 100},
+            parallel=True,
+        ).sortby("valid_time")
+        ds = ds[[self.var_name]]
+        ds = self._drop_feb29(ds)
+        ds = self._select_north_america(ds)
+        return ds
 
     @cached_property
     def dataarray(self) -> xr.DataArray:
@@ -100,13 +104,11 @@ class DailyMean:
             linewidth=0.8,
             label="2m Temperature",
         )
-
         ax.set_title("Daily Mean Temperature")
         ax.set_ylabel("Temperature")
         ax.set_xlabel("Date")
         ax.legend(fontsize=12)
         ax.grid(True, alpha=0.3)
-
         fig.tight_layout()
         fig.savefig("daily_mean_lineplot.png", dpi=200)
 
@@ -304,7 +306,7 @@ if __name__ == "__main__":
     to_year: int = 2025
     skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=from_year, to_year=to_year)
     t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=from_year, to_year=to_year)
-    daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
-    daily_mean.plot()
+    # daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
+    # daily_mean.plot()
     heatwave = HeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
-    heatwave.plot_spatial_extreme_frequency()
+    # heatwave.plot_spatial_extreme_frequency()
