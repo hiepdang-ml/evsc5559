@@ -31,7 +31,10 @@ class Era5TemperatureReader:
         filepaths: list[Path] = []
         for quarter_dir in quarter_dirs:
             matches: list[Path] = sorted(quarter_dir.glob(self.file_re.pattern))
-            assert len(matches) == 1, f"{quarter_dir}: expected 1 match, got {len(matches)}"
+            assert len(matches) == 1, (
+                f"No file found with pattern: {self.file_re.pattern}. "
+                f"List of available file: {sorted(quarter_dir.glob('*'))}"
+            )
             filepaths.append(matches[0])
 
         return filepaths
