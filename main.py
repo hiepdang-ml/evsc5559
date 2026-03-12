@@ -49,14 +49,16 @@ class Era5TemperatureReader:
     def dataset(self) -> xr.Dataset:
         ds: xr.Dataset = xr.open_mfdataset(
             self.filepaths,
+            engine="h5netcdf",
             combine="nested",
             concat_dim="valid_time",
-            chunks={"valid_time": 90, "latitude": 100, "longitude": 100},
             parallel=True,
+            chunks="auto",
         ).sortby("valid_time")
         ds = ds[[self.var_name]]
-        ds = self._drop_feb29(ds)
         ds = self._select_north_america(ds)
+        ds = self._drop_feb29(ds)
+        ds = ds.chunk({"valid_time": -1, "latitude": 100, "longitude": 100})
         return ds
 
     @cached_property
