@@ -307,3 +307,4 @@ if __name__ == "__main__":
     daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
     daily_mean.plot()
     heatwave = HeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
+    heatwave.plot_spatial_extreme_frequency_globe()
