@@ -3,6 +3,7 @@ from functools import cached_property
 from pathlib import Path
 import re
 
+import cartopy.crs as ccrs
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
@@ -77,24 +78,30 @@ class DailyMean:
         self.t2m_reader = t2m_reader
 
     def plot(self) -> None:
-        fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-        axes[0].plot(
-            self.skt_reader.daily_mean.index, self.skt_reader.daily_mean.values,
-            color="firebrick", linewidth=0.8
+        fig, ax = plt.subplots(figsize=(14, 6))
+        ax.plot(
+            self.skt_reader.daily_mean.index.to_numpy(),
+            self.skt_reader.daily_mean.to_numpy(),
+            color="firebrick",
+            linewidth=0.8,
+            label="Skin Temperature",
         )
-        axes[0].set_title("Daily Skin Temperature")
-        axes[0].set_ylabel("Temperature")
+        ax.plot(
+            self.t2m_reader.daily_mean.index.to_numpy(),
+            self.t2m_reader.daily_mean.to_numpy(),
+            color="steelblue",
+            linewidth=0.8,
+            label="2m Temperature",
+        )
 
-        axes[1].plot(
-            self.t2m_reader.daily_mean.index, self.t2m_reader.daily_mean.values,
-            color="steelblue", linewidth=0.8
-        )
-        axes[1].set_title("Daily 2m Temperature")
-        axes[1].set_ylabel("Temperature")
-        axes[1].set_xlabel("Date")
+        ax.set_title("Daily Mean Temperature")
+        ax.set_ylabel("Temperature")
+        ax.set_xlabel("Date")
+        ax.legend(fontsize=12)
+        ax.grid(True, alpha=0.3)
+
         fig.tight_layout()
-        fig.savefig(fname="line_plot.png")
-
+        fig.savefig("daily_mean_lineplot.png", dpi=200)
 
 
 class HeatwaveAnalysis:
@@ -246,54 +253,29 @@ class HeatwaveAnalysis:
             "spatial_extreme_frequency": spatial_extreme_frequency,
         }
 
-    def plot_spatial_extreme_frequency_globe(self, stride: int = 8) -> None:
+    def plot_spatial_extreme_frequency_map(self) -> None:
         spatial_extreme_frequency: xr.DataArray = self.extreme_mask.mean(dim="valid_time")
-        spatial_extreme_frequency = spatial_extreme_frequency.isel(
-            latitude=slice(None, None, stride),
-            longitude=slice(None, None, stride),
-        )
 
-        lon_deg: np.ndarray = spatial_extreme_frequency["longitude"].to_numpy()
-        lat_deg: np.ndarray = spatial_extreme_frequency["latitude"].to_numpy()
-        lon2d_deg: np.ndarray
-        lat2d_deg: np.ndarray
-        lon2d_deg, lat2d_deg = np.meshgrid(lon_deg, lat_deg)
-
-        lon_rad: np.ndarray = np.deg2rad(lon2d_deg)
-        lat_rad: np.ndarray = np.deg2rad(lat2d_deg)
-
-        radius: float = 1.0
-        x: np.ndarray = radius * np.cos(lat_rad) * np.cos(lon_rad)
-        y: np.ndarray = radius * np.cos(lat_rad) * np.sin(lon_rad)
-        z: np.ndarray = radius * np.sin(lat_rad)
-
+        longitude: np.ndarray = spatial_extreme_frequency["longitude"].to_numpy()
+        latitude: np.ndarray = spatial_extreme_frequency["latitude"].to_numpy()
         values: np.ndarray = spatial_extreme_frequency.to_numpy()
-        norm = plt.Normalize(vmin=float(np.nanmin(values)), vmax=float(np.nanmax(values))) # pyright: ignore
-        facecolors = plt.cm.hot(norm(values)) # pyright: ignore
 
-        fig = plt.figure(figsize=(10, 10))
-        ax = fig.add_subplot(111, projection="3d")
-        ax.plot_surface(
-            x,
-            y,
-            z,
-            facecolors=facecolors,
-            rstride=1,
-            cstride=1,
-            linewidth=0,
-            antialiased=False,
-            shade=False,
+        fig = plt.figure(figsize=(14, 6))
+        ax = fig.add_subplot(111, projection=ccrs.Robinson())
+        ax.coastlines(linewidth=0.7)    # pyright: ignore
+
+        mesh = ax.pcolormesh(
+            longitude,
+            latitude,
+            values,
+            transform=ccrs.PlateCarree(),
+            shading="auto",
+            cmap="hot",
         )
-
-        mappable = plt.cm.ScalarMappable(cmap="hot", norm=norm)
-        mappable.set_array(values)
-        fig.colorbar(mappable, ax=ax, shrink=0.6, pad=0.08, label="Extreme Frequency")
-
-        ax.set_title(f"{self.var_name.upper()} Spatial Extreme Frequency on Globe")
-        ax.set_box_aspect((1, 1, 1))
-        ax.set_axis_off()
+        ax.set_title(f"{self.var_name.upper()} Spatial Extreme Frequency")
+        fig.colorbar(mesh, ax=ax, orientation="horizontal", pad=0.05, label="Extreme Frequency")
         fig.tight_layout()
-        fig.savefig(f"{self.var_name}_extreme_frequency_globe.png", dpi=200)
+        fig.savefig(f"{self.var_name}_spatial_extreme_frequency_map.png", dpi=200)
 
 
 
@@ -307,4 +289,4 @@ if __name__ == "__main__":
     daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
     daily_mean.plot()
     heatwave = HeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
-    heatwave.plot_spatial_extreme_frequency_globe()
+    heatwave.plot_spatial_extreme_frequency_map()
