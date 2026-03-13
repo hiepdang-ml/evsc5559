@@ -358,7 +358,15 @@ class TemperaturePersistenceAnalysis:
                 t2m_autocorr,
                 f"T2M Anomaly Autocorrelation (lag={lag} days)",
             )
-            cbar = fig.colorbar(mesh, ax=axes, shrink=0.75, pad=0.02, fraction=0.035, aspect=30)
+            cbar = fig.colorbar(
+                mesh,
+                ax=axes,
+                orientation="horizontal",
+                shrink=0.8,
+                pad=0.08,
+                fraction=0.06,
+                aspect=40,
+            )
             cbar.set_label("Correlation", fontsize=16)
             fig.tight_layout()
             fig.savefig(f"temperature_anomaly_autocorrelation_comparison_lag_{lag}.png", dpi=300)
