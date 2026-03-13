@@ -546,26 +546,24 @@ class SkinAirTemperatureDifferenceAnalysis:
 
 if __name__ == "__main__":
 
-    root: str = "/scratch/zgp2ps/era5/raw/singlelevel/"
-
-    # skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=2025, to_year=2025)
-    # t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=2025, to_year=2025)
-    # daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
-    # daily_mean.plot()
+    skt_reader = Era5TemperatureReader(root_dir=DATA_ROOT, var_name="skt", from_year=2025, to_year=2025)
+    t2m_reader = Era5TemperatureReader(root_dir=DATA_ROOT, var_name="t2m", from_year=2025, to_year=2025)
+    daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
+    daily_mean.plot()
 
     from_year: int = 2000
     to_year: int = 2025
-    skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=from_year, to_year=to_year)
-    t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=from_year, to_year=to_year)
+    skt_reader = Era5TemperatureReader(root_dir=DATA_ROOT, var_name="skt", from_year=from_year, to_year=to_year)
+    t2m_reader = Era5TemperatureReader(root_dir=DATA_ROOT, var_name="t2m", from_year=from_year, to_year=to_year)
 
-    # persistence = TemperaturePersistenceAnalysis(skt_reader=skt_reader, t2m_reader=t2m_reader)
-    # persistence.plot_autocorrelation(max_lag=30)
+    persistence = TemperaturePersistenceAnalysis(skt_reader=skt_reader, t2m_reader=t2m_reader)
+    persistence.plot_autocorrelation(max_lag=30)
 
     skt_heatwave = SameTimeHeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
     t2m_heatwave = SameTimeHeatwaveAnalysis(var_name="t2m", from_year=from_year, to_year=to_year)
 
-    # skt_heatwave.plot_frequency_by_year()
-    # t2m_heatwave.plot_frequency_by_year()
+    skt_heatwave.plot_frequency_by_year()
+    t2m_heatwave.plot_frequency_by_year()
 
     skt_t2m_difference = SkinAirTemperatureDifferenceAnalysis(
         skt_reader=skt_reader,
@@ -574,9 +572,9 @@ if __name__ == "__main__":
     )
     skt_t2m_difference.plot_distribution()
 
-    # for year in range(from_year, to_year + 1):
-    #     skt_heatwave.plot_count_map(year)
-    #     t2m_heatwave.plot_count_map(year)
+    for year in range(from_year, to_year + 1):
+        skt_heatwave.plot_count_map(year)
+        t2m_heatwave.plot_count_map(year)
 
-    # skt_heatwave.plot_heatwave_distribution()
-    # t2m_heatwave.plot_heatwave_distribution()
+    skt_heatwave.plot_heatwave_distribution()
+    t2m_heatwave.plot_heatwave_distribution()
