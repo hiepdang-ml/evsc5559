@@ -9,11 +9,9 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 from scipy.stats import gaussian_kde
-import geopandas as gpd
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cmasher as cmr
-from cmap import Colormap
 
 DATA_ROOT = "/scratch/zgp2ps/era5/raw/singlelevel/"
 LAND_MASK_PATH = "/scratch/zgp2ps/era5/raw/landmask/landmask.nc"
