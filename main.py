@@ -13,6 +13,7 @@ import geopandas as gpd
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import cmasher as cmr
+from cmap import Colormap
 
 DATA_ROOT = "/scratch/zgp2ps/era5/raw/singlelevel/"
 LAND_MASK_PATH = "/scratch/zgp2ps/era5/raw/landmask/landmask.nc"
@@ -126,7 +127,7 @@ class DailyMean:
         return mean_series.sort_index()
 
     def plot(self) -> None:
-        fig, ax = plt.subplots(figsize=(14, 6))
+        fig, ax = plt.subplots(figsize=(9, 6))
         skt_mean: pd.Series = self.daily_mean("skt")
         ax.plot(
             skt_mean.index.to_numpy(),
@@ -142,10 +143,11 @@ class DailyMean:
             linewidth=0.8,
             label="2m Temperature",
         )
-        ax.set_title("Daily Mean Temperature")
-        ax.set_ylabel("Temperature")
-        ax.set_xlabel("Date")
-        ax.legend(fontsize=12)
+        ax.set_title("Daily Mean Temperature", fontsize=16)
+        ax.set_ylabel("Temperature", fontsize=14)
+        ax.set_xlabel("Date", fontsize=14)
+        ax.tick_params(axis="both", labelsize=14)
+        ax.legend(fontsize=14)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
         fig.savefig("daily_mean_lineplot.png", dpi=200)
@@ -320,7 +322,7 @@ class TemperaturePersistenceAnalysis:
             lat,
             values,
             shading="auto",
-            cmap="coolwarm",
+            cmap="RdBu_r",
             vmin=-1,
             vmax=1,
             transform=ccrs.PlateCarree(),
@@ -329,9 +331,10 @@ class TemperaturePersistenceAnalysis:
         ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.5, edgecolor="black")
         ax.add_feature(cfeature.BORDERS.with_scale("50m"), linewidth=0.4, edgecolor="black")
         ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.3, edgecolor="black")
-        ax.set_title(title, fontsize=18)
-        ax.set_xlabel("Longitude", fontsize=14)
-        ax.set_ylabel("Latitude", fontsize=14)
+        ax.set_title(title, fontsize=22)
+        ax.set_xlabel("Longitude", fontsize=18)
+        ax.set_ylabel("Latitude", fontsize=18)
+        ax.tick_params(axis="both", labelsize=14)
         return mesh
 
     def plot_autocorrelation(self, max_lag: int = 30) -> None:
@@ -348,6 +351,7 @@ class TemperaturePersistenceAnalysis:
                     )
                 },
             )
+            fig.subplots_adjust(left=0.02, right=0.995, top=0.9, bottom=0.1, wspace=0.01)
             mesh = self._plot_autocorrelation_panel(
                 axes[0],
                 skt_autocorr,
@@ -363,12 +367,12 @@ class TemperaturePersistenceAnalysis:
                 ax=axes,
                 orientation="horizontal",
                 shrink=0.8,
-                pad=0.08,
-                fraction=0.06,
+                pad=0.035,
+                fraction=0.035,
                 aspect=40,
             )
-            cbar.set_label("Correlation", fontsize=16)
-            fig.tight_layout()
+            cbar.set_label("Correlation", fontsize=18)
+            cbar.ax.tick_params(labelsize=14)
             fig.savefig(f"temperature_anomaly_autocorrelation_comparison_lag_{lag}.png", dpi=300)
 
 
@@ -504,7 +508,7 @@ class SkinAirTemperatureDifferenceAnalysis:
             density=True,
             color="steelblue",
             alpha=0.25,
-            label="Normal Days Histogram",
+            label="Normal Days",
         )
         ax.hist(
             heatwave_difference.to_numpy(),
@@ -512,29 +516,28 @@ class SkinAirTemperatureDifferenceAnalysis:
             density=True,
             color="firebrick",
             alpha=0.25,
-            label="Heatwave Days Histogram",
+            label="Heatwave Days",
         )
         ax.plot(
             x_grid,
             normal_kde(x_grid),
             color="steelblue",
             linewidth=2,
-            label="Normal Days",
         )
         ax.plot(
             x_grid,
             heatwave_kde(x_grid),
             color="firebrick",
             linewidth=2,
-            label="Heatwave Days",
         )
         ax.fill_between(x_grid, normal_kde(x_grid), color="steelblue", alpha=0.2)
         ax.fill_between(x_grid, heatwave_kde(x_grid), color="firebrick", alpha=0.2)
         ax.axvline(float(normal_difference.mean()), color="steelblue", linestyle="--", linewidth=1.5)
         ax.axvline(float(heatwave_difference.mean()), color="firebrick", linestyle="--", linewidth=1.5)
         ax.set_title("Distribution of SKT - T2M", fontsize=16)
-        ax.set_xlabel("SKT - T2M", fontsize=13)
-        ax.set_ylabel("Density", fontsize=13)
+        ax.set_xlabel("SKT - T2M", fontsize=14)
+        ax.set_ylabel("Density", fontsize=14)
+        ax.tick_params(axis="both", labelsize=12)
         ax.legend(fontsize=12)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
@@ -544,19 +547,25 @@ class SkinAirTemperatureDifferenceAnalysis:
 if __name__ == "__main__":
 
     root: str = "/scratch/zgp2ps/era5/raw/singlelevel/"
+
+    # skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=2025, to_year=2025)
+    # t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=2025, to_year=2025)
+    # daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
+    # daily_mean.plot()
+
     from_year: int = 2000
     to_year: int = 2025
     skt_reader = Era5TemperatureReader(root_dir=root, var_name="skt", from_year=from_year, to_year=to_year)
     t2m_reader = Era5TemperatureReader(root_dir=root, var_name="t2m", from_year=from_year, to_year=to_year)
 
-    daily_mean = DailyMean(skt_reader=skt_reader, t2m_reader=t2m_reader)
-    daily_mean.plot()
-
-    persistence = TemperaturePersistenceAnalysis(skt_reader=skt_reader, t2m_reader=t2m_reader)
-    persistence.plot_autocorrelation(max_lag=30)
+    # persistence = TemperaturePersistenceAnalysis(skt_reader=skt_reader, t2m_reader=t2m_reader)
+    # persistence.plot_autocorrelation(max_lag=30)
 
     skt_heatwave = SameTimeHeatwaveAnalysis(var_name="skt", from_year=from_year, to_year=to_year)
     t2m_heatwave = SameTimeHeatwaveAnalysis(var_name="t2m", from_year=from_year, to_year=to_year)
+
+    # skt_heatwave.plot_frequency_by_year()
+    # t2m_heatwave.plot_frequency_by_year()
 
     skt_t2m_difference = SkinAirTemperatureDifferenceAnalysis(
         skt_reader=skt_reader,
@@ -565,12 +574,9 @@ if __name__ == "__main__":
     )
     skt_t2m_difference.plot_distribution()
 
-    skt_heatwave.plot_frequency_by_year()
-    t2m_heatwave.plot_frequency_by_year()
+    # for year in range(from_year, to_year + 1):
+    #     skt_heatwave.plot_count_map(year)
+    #     t2m_heatwave.plot_count_map(year)
 
-    for year in range(from_year, to_year + 1):
-        skt_heatwave.plot_count_map(year)
-        t2m_heatwave.plot_count_map(year)
-
-    skt_heatwave.plot_heatwave_distribution()
-    t2m_heatwave.plot_heatwave_distribution()
+    # skt_heatwave.plot_heatwave_distribution()
+    # t2m_heatwave.plot_heatwave_distribution()
