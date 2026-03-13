@@ -127,14 +127,14 @@ class DailyMean:
 
     def plot(self) -> None:
         fig, ax = plt.subplots(figsize=(14, 6))
-        skt_mean: pd.Series = self.daily_mean()
+        skt_mean: pd.Series = self.daily_mean("skt")
         ax.plot(
             skt_mean.index.to_numpy(),
             skt_mean.to_numpy(),
             color="firebrick", linewidth=0.8,
             label="Skin Temperature",
         )
-        t2m_mean: pd.Series = self.daily_mean()
+        t2m_mean: pd.Series = self.daily_mean("t2m")
         ax.plot(
             t2m_mean.index.to_numpy(),
             t2m_mean.to_numpy(),
