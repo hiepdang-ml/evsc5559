@@ -258,7 +258,7 @@ class HeatwaveAnalysis:
         lat: np.ndarray = count_map["latitude"].to_numpy()
         values: np.ndarray = count_map.to_numpy()
 
-        fig = plt.figure(figsize=(10, 6))
+        fig = plt.figure(figsize=(9.5, 6))
         ax: Any = fig.add_subplot(
             111,
             projection=ccrs.AlbersEqualArea(
@@ -273,18 +273,18 @@ class HeatwaveAnalysis:
             shading="auto",
             cmap=cmr.sunburst_r,
             vmin=0,
-            vmax=50,
+            vmax=90,
             transform=ccrs.PlateCarree(),
         )
         ax.set_extent([-125, -66.5, 24, 49.5], crs=ccrs.PlateCarree())
         ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.5, edgecolor="black")
         ax.add_feature(cfeature.BORDERS.with_scale("50m"), linewidth=0.4, edgecolor="black")
         ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.3, edgecolor="black")
-        ax.set_title(f"Count of Extreme Days per Pixel ({year})", fontsize=18)
+        ax.set_title(f"Number of Extreme Days - {year}", fontsize=18)
         ax.set_xlabel("Longitude", fontsize=14)
         ax.set_ylabel("Latitude", fontsize=14)
-        cbar = fig.colorbar(mesh, ax=ax, shrink=0.75, pad=0.02, fraction=0.035, aspect=30)
-        cbar.set_label("Extreme Day Count", fontsize=14)
+        cbar = fig.colorbar(mesh, ax=ax, shrink=0.8, pad=0.02, fraction=0.035, aspect=30)
+        cbar.set_label("Day Count", fontsize=16)
         fig.tight_layout()
         fig.savefig(f"{self.var_name}_count_map_{year}.png", dpi=400)
 
@@ -300,7 +300,8 @@ class TemperaturePersistenceAnalysis:
         anomaly_on_land: xr.DataArray = reader.anomalies.where(reader.land_mask)
         lead_arrays = anomaly_on_land.isel(valid_time=slice(None, -lag))
         lag_arrays = anomaly_on_land.isel(valid_time=slice(lag, None))
-        assert lead_arrays.shape[0] == lag_arrays.shape[0]
+        lag_arrays = lag_arrays.assign_coords(valid_time=lead_arrays.valid_time)
+        assert lead_arrays.shape == lag_arrays.shape
         pixelwise_corr: xr.DataArray = xr.corr(lead_arrays, lag_arrays, dim="valid_time")
         return pixelwise_corr
 
@@ -328,7 +329,9 @@ class TemperaturePersistenceAnalysis:
         ax.add_feature(cfeature.COASTLINE.with_scale("50m"), linewidth=0.5, edgecolor="black")
         ax.add_feature(cfeature.BORDERS.with_scale("50m"), linewidth=0.4, edgecolor="black")
         ax.add_feature(cfeature.STATES.with_scale("50m"), linewidth=0.3, edgecolor="black")
-        ax.set_title(title, fontsize=14)
+        ax.set_title(title, fontsize=18)
+        ax.set_xlabel("Longitude", fontsize=14)
+        ax.set_ylabel("Latitude", fontsize=14)
         return mesh
 
     def plot_autocorrelation(self, max_lag: int = 30) -> None:
@@ -336,9 +339,8 @@ class TemperaturePersistenceAnalysis:
             skt_autocorr = self.autocorrelation(reader=self.skt_reader, lag=lag)
             t2m_autocorr = self.autocorrelation(reader=self.t2m_reader, lag=lag)
             fig, axes = plt.subplots(
-                1,
-                2,
-                figsize=(16, 6),
+                1, 2,
+                figsize=(19, 6),
                 subplot_kw={
                     "projection": ccrs.AlbersEqualArea(
                         central_longitude=-96,
@@ -357,7 +359,7 @@ class TemperaturePersistenceAnalysis:
                 f"T2M Anomaly Autocorrelation (lag={lag} days)",
             )
             cbar = fig.colorbar(mesh, ax=axes, shrink=0.75, pad=0.02, fraction=0.035, aspect=30)
-            cbar.set_label("Correlation", fontsize=13)
+            cbar.set_label("Correlation", fontsize=16)
             fig.tight_layout()
             fig.savefig(f"temperature_anomaly_autocorrelation_comparison_lag_{lag}.png", dpi=300)
 
